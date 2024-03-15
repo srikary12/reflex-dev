@@ -16,6 +16,8 @@ from redis.exceptions import RedisError
 
 from reflex.utils import console, path_ops, prerequisites
 
+import socket
+import threading
 
 def kill(pid):
     """Kill a process.
@@ -87,6 +89,31 @@ def kill_process_on_port(port):
             get_process_on_port(port).kill()  # type: ignore
 
 
+def get_free_port(default_port: str) -> str:
+    """Terminate or change the port.
+
+    Args:
+        port: The port.
+
+    Returns:
+        The new port
+
+    Raises:
+        Exit: If the user raises an error.
+    """
+    port = int(default_port)
+    while True:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("localhost", port))
+                return str(port)
+        except OSError as e:
+            if e.errno == 48:  # Address already in use
+                port += 1
+            else:
+                raise typer.Exit()
+
+
 def change_or_terminate_port(port, _type) -> str:
     """Terminate or change the port.
 
@@ -104,7 +131,24 @@ def change_or_terminate_port(port, _type) -> str:
     console.info(
         f"Something is already running on port [bold underline]{port}[/bold underline]. This is the port the {_type} runs on."
     )
-    frontend_action = console.ask("Kill or change it?", choices=["k", "c", "n"])
+
+    def auto_select() -> str:
+        console.info(
+            f"Auto-selecting port..."
+        )
+        new_port = get_free_port(port)
+        console.info(
+            f"The {_type} will run on port [bold underline]{new_port}[/bold underline]."
+        )
+        return new_port
+    
+    timer = threading.Timer(5.0, auto_select)
+    timer.start()
+
+    frontend_action = console.ask("Kill or change it or auto-select?(auto selects in 5 seconds)", choices=["k", "c", "a", "n"])
+
+    timer.cancel()
+
     if frontend_action == "k":
         kill_process_on_port(port)
         return port
@@ -119,6 +163,9 @@ def change_or_terminate_port(port, _type) -> str:
                 f"The {_type} will run on port [bold underline]{new_port}[/bold underline]."
             )
             return new_port
+    elif frontend_action == "a":
+        new_port = auto_select()
+        return new_port
     else:
         console.log("Exiting...")
         raise typer.Exit()
